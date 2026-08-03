@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reproductor M3U Avanzado</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #141414;
+      color: #fff;
+    }
+    .header {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    input[type="text"] {
+      padding: 12px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #222;
+      color: #fff;
+      font-size: 15px;
+    }
+    .url-input { flex: 1; }
+    .search-input {
+      width: 100%;
+      margin-bottom: 10px;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 12px 20px;
+      background: #e50914;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background: #b80710; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 20px;
+    }
+    @media (max-width: 768px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    .player-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    video {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+    }
+
+    .player-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1f1f1f;
+      padding: 10px 15px;
+      border-radius: 6px;
+    }
+
+    .nav-btn {
+      background: #333;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+    .nav-btn:hover { background: #444; }
+
+    #currentChannelName {
+      font-weight: bold;
+      font-size: 15px;
+      color: #e50914;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+      max-width: 300px;
+    }
+
+    .playlist {
+      background: #1f1f1f;
+      border-radius: 8px;
+      padding: 15px;
+      max-height: 520px;
+      display: flex;
+      flex-direction: column;
+    }
+    .playlist h3 {
+      margin-top: 0;
+      font-size: 16px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+    }
+    .channel-container {
+      overflow-y: auto;
+      flex: 1;
+    }
+    .channel-item {
+      padding: 10px;
+      border-bottom: 1px solid #2a2a2a;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .channel-item:hover, .channel-item.active {
+      background: #333;
+      border-radius: 4px;
+    }
+    .channel-item.active {
+      border-left: 4px solid #e50914;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Reproductor M3U Auto-Cargable</h2>
+
+  <div class="header">
+    <input type="text" id="m3uUrl" class="url-input" value="https://raw.githubusercontent.com/01juegosline01-svg/iptvfree/refs/heads/main/playlist(2).m3u" placeholder="Pega la URL aquí..." />
+    <button onclick="cargarLista()">Cargar URL</button>
+  </div>
+
+  <div class="layout">
+    <div class="player-container">
+      <video id="videoPlayer" controls autoplay muted playsinline></video>
+
+      <!-- Controles de navegación de canales -->
+      <div class="player-controls">
+        <button class="nav-btn" onclick="canalAnterior()">⏮️ Anterior</button>
+        <span id="currentChannelName">Sin reproducción</span>
+        <button class="nav-btn" onclick="canalSiguiente()">Siguiente ⏭️</button>
+      </div>
+    </div>
+
+    <div class="playlist">
+      <h3 id="playlistTitle">Canales (0)</h3>
+      <input type="text" id="searchBox" class="search-input" placeholder="🔍 Buscar canal..." oninput="filtrarCanales()" />
+      <div id="channelList" class="channel-container">Cargando canales automáticamente...</div>
+    </div>
+  </div>
+
+  <script>
+    let hlsInstance = null;
+    let listaCanalesGlobal = [];
+    let canalActualIndex = -1;
+    let errorTimeout = null;
+
+    window.onload = function() {
+      cargarLista();
+    };
+
+    async function cargarLista() {
+      const url = document.getElementById('m3uUrl').value.trim();
+      const channelListDiv = document.getElementById('channelList');
+
+      if (!url) {
+        alert('Por favor introduce una URL válida.');
+        return;
+      }
+
+      if (url.endsWith('.m3u8') || url.endsWith('.mp4')) {
+        listaCanalesGlobal = [{ name: 'Canal Individual', url: url }];
+        mostrarCanales(listaCanalesGlobal);
+        reproducirCanalPorIndice(0);
+        return;
+      }
+
+      channelListDiv.innerHTML = 'Cargando canales...';
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('No se pudo descargar la lista');
+
+        const texto = await response.text();
+        listaCanalesGlobal = parseM3U(texto);
+
+        document.getElementById('searchBox').value = '';
+        mostrarCanales(listaCanalesGlobal);
+
+        if (listaCanalesGlobal.length > 0) {
+          reproducirCanalPorIndice(0);
+        }
+      } catch (error) {
+        channelListDiv.innerHTML = 'Error al cargar la lista. Verifica la URL o expiración del enlace.';
+      }
+    }
+
+    function parseM3U(content) {
+      const lines = content.split('\n');
+      const canales = [];
+      let currentName = '';
+
+      lines.forEach(line => {
+        line = line.trim();
+        if (line.startsWith('#EXTINF:')) {
+          const parts = line.split(',');
+          currentName = parts.length > 1 ? parts.slice(1).join(',') : 'Canal sin nombre';
+        } else if (line && !line.startsWith('#')) {
+          canales.push({ name: currentName || line, url: line });
+          currentName = '';
+        }
+      });
+
+      return canales;
+    }
+
+    function mostrarCanales(canales) {
+      const channelListDiv = document.getElementById('channelList');
+      document.getElementById('playlistTitle').innerText = `Canales (${canales.length})`;
+      channelListDiv.innerHTML = '';
+
+      if (canales.length === 0) {
+        channelListDiv.innerHTML = '<div style="padding: 10px; color: #aaa;">No se encontraron canales.</div>';
+        return;
+      }
+
+      canales.forEach((canal) => {
+        const indexEnListaGlobal = listaCanalesGlobal.findIndex(c => c.url === canal.url);
+        const div = document.createElement('div');
+        div.className = `channel-item ${indexEnListaGlobal === canalActualIndex ? 'active' : ''}`;
+        div.innerText = canal.name;
+        div.onclick = () => reproducirCanalPorIndice(indexEnListaGlobal);
+        channelListDiv.appendChild(div);
+      });
+    }
+
+    function filtrarCanales() {
+      const busqueda = document.getElementById('searchBox').value.toLowerCase();
+      const canalesFiltrados = listaCanalesGlobal.filter(canal =>
+        canal.name.toLowerCase().includes(busqueda)
+      );
+      mostrarCanales(canalesFiltrados);
+    }
+
+    function reproducirCanalPorIndice(index) {
+      if (index < 0 || index >= listaCanalesGlobal.length) return;
+
+      canalActualIndex = index;
+      const canal = listaCanalesGlobal[canalActualIndex];
+      document.getElementById('currentChannelName').innerText = canal.name;
+
+      // Resaltar canal activo en la interfaz
+      mostrarCanales(listaCanalesGlobal);
+
+      const video = document.getElementById('videoPlayer');
+
+      // Limpiar timeouts de error previos
+      if (errorTimeout) clearTimeout(errorTimeout);
+      if (hlsInstance) hlsInstance.destroy();
+
+      // Temporizador de tolerancia (5 segundos) antes de auto-saltar por canal caído
+      errorTimeout = setTimeout(() => {
+        console.warn("Canal descompuesto o lento, saltando al siguiente...");
+        canalSiguiente();
+      }, 5000);
+
+      if (Hls.isSupported()) {
+        hlsInstance = new Hls({ manifestLoadingTimeOut: 4000 });
+        hlsInstance.loadSource(canal.url);
+        hlsInstance.attachMedia(video);
+
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          clearTimeout(errorTimeout);
+          video.play().catch(e => console.log("Autoplay bloqueado:", e));
+        });
+
+        // Captura de errores de red o reproducción
+        hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            clearTimeout(errorTimeout);
+            console.warn("Error fatal detectado en HLS, saltando canal...");
+            canalSiguiente();
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = canal.url;
+        video.addEventListener('loadedmetadata', () => {
+          clearTimeout(errorTimeout);
+          video.play().catch(e => console.log("Autoplay bloqueado:", e));
+        });
+        video.onerror = () => {
+          clearTimeout(errorTimeout);
+          canalSiguiente();
+        };
+      }
+    }
+
+    function canalSiguiente() {
+      if (listaCanalesGlobal.length === 0) return;
+      let nuevoIndice = canalActualIndex + 1;
+      if (nuevoIndice >= listaCanalesGlobal.length) nuevoIndice = 0; // Bucle al primer canal
+      reproducirCanalPorIndice(nuevoIndice);
+    }
+
+    function canalAnterior() {
+      if (listaCanalesGlobal.length === 0) return;
+      let nuevoIndice = canalActualIndex - 1;
+      if (nuevoIndice < 0) nuevoIndice = listaCanalesGlobal.length - 1; // Bucle al último canal
+      reproducirCanalPorIndice(nuevoIndice);
+    }
+  </script>
+
+</body>
+</html>
