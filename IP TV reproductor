@@ -127,7 +127,7 @@
 </head>
 <body>
 
-  <h2>Reproductor M3U Auto-Cargable</h2>
+  <h2>JAGUAR LIVE</h2>
 
   <div class="header">
     <input type="text" id="m3uUrl" class="url-input" value="https://raw.githubusercontent.com/01juegosline01-svg/iptvfree/refs/heads/main/playlist(2).m3u" placeholder="Pega la URL aquí..." />
